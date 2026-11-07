@@ -10,6 +10,8 @@
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -30,17 +32,35 @@ DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
 def fetch_text(url):
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.read().decode('utf-8', errors='replace')
-    except Exception:
-        https_url = url.replace('http://', 'https://', 1)
-        if https_url != url:
-            req = urllib.request.Request(https_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return r.read().decode('utf-8', errors='replace')
-        raise
+    """拉一个 txt；429/5xx/网络异常时重试最多 5 次。
+    优先用 Retry-After，否则退避 60s→120s→180s→300s；每次先 http、失败再试 https。"""
+    last_exc = None
+    for attempt in range(5):
+        for try_url in (url, url.replace('http://', 'https://', 1)):
+            try:
+                req = urllib.request.Request(try_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.read().decode('utf-8', errors='replace')
+            except urllib.error.HTTPError as e:
+                last_exc = e
+                if e.code in (429, 500, 502, 503, 504):
+                    break  # 可重试的状态码，先退避再重拉
+                raise
+            except Exception as e:
+                last_exc = e
+        if attempt == 4:
+            break
+        wait = 60 * (attempt + 1) if attempt < 3 else 300
+        if isinstance(last_exc, urllib.error.HTTPError):
+            ra = last_exc.headers.get('Retry-After')
+            if ra:
+                try:
+                    wait = max(int(ra), 1)
+                except ValueError:
+                    pass
+        print(f'fetch {url} 失败（{last_exc}），{wait}s 后第 {attempt + 2} 次重试', flush=True)
+        time.sleep(wait)
+    raise last_exc or RuntimeError('fetch failed: ' + url)
 
 
 def parse_draws(text, spec):
@@ -142,7 +162,9 @@ def refresh_html(html, rows_by_key):
 def main():
     html_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / 'index.html'
     rows_by_key = {}
-    for key, spec in SPECS.items():
+    for i, (key, spec) in enumerate(SPECS.items()):
+        if i:
+            time.sleep(90)  # 彩种间停 90 秒，别连着拉触发 17500 限流
         rows = parse_draws(fetch_text(spec['url']), spec)
         validate_rows(rows, spec, key)
         rows_by_key[key] = rows
