@@ -193,20 +193,64 @@ document.querySelectorAll('#countSeg button').forEach(b => b.onclick = () => {
 $('kl8count').onchange = gen;
 $('gen').onclick = gen;
 switchTab('ssq');
-// 每次打开自动更新：同域 /api/draws（Cloudflare Pages 函数）实时拉 17500 最新数据；
-// GitHub Pages 上没有这个接口，请求失败时静默用页内数据（每晚定时任务也会刷新页内数据）。
+// 每次打开自动更新：浏览器直接拉 data.17500.cn 的 txt（客户端是国内网络，不易被限流）。
+// 服务器端（GitHub Actions / Cloudflare 函数）拉取会被 17500 限流 429，所以 /api/draws 只作备用；
+// 全部失败时静默用页内数据（每晚定时任务也会刷新页内数据）。
 (function(){
   const SPECS = {
     ssq: {n:6, min:1, max:33, sub:'scalar', subMin:1, subMax:16, count:100, unique:true},
     dlt: {n:5, min:1, max:35, sub:'array', subMin:1, subMax:12, count:100, unique:true},
     kl8: {n:20, min:1, max:80, sub:0, count:50, unique:true},
-    '3d': {n:3, min:0, max:9, sub:0, count:50, unique:false},
+    '3d': {n:3, min:0, max:9, sub:0, count:50, unique:false, ordered:true},
     '7lc': {n:7, min:1, max:30, sub:'scalar', subMin:1, subMax:30, count:50, unique:true, subExcl:true},
-    '7xc': {n:6, min:0, max:9, sub:'scalar', subMin:0, subMax:14, count:50, unique:false},
-    pl3: {n:3, min:0, max:9, sub:0, count:50, unique:false},
-    pl5: {n:5, min:0, max:9, sub:0, count:50, unique:false}
+    '7xc': {n:6, min:0, max:9, sub:'scalar', subMin:0, subMax:14, count:50, unique:false, ordered:true},
+    pl3: {n:3, min:0, max:9, sub:0, count:50, unique:false, ordered:true},
+    pl5: {n:5, min:0, max:9, sub:0, count:50, unique:false, ordered:true}
+  };
+  const URLS = {
+    ssq: 'https://data.17500.cn/ssq_asc.txt',
+    dlt: 'https://data.17500.cn/dlt_asc.txt',
+    kl8: 'https://data.17500.cn/kl8_asc.txt',
+    '3d': 'https://data.17500.cn/3d_asc.txt',
+    '7lc': 'https://data.17500.cn/7lc_asc.txt',
+    '7xc': 'https://data.17500.cn/7xc_asc.txt',
+    pl3: 'https://data.17500.cn/pl3_asc.txt',
+    pl5: 'https://data.17500.cn/pl5_asc.txt'
   };
   const LABELS = [['双色球','ssq'],['大乐透','dlt'],['快乐8','kl8'],['福彩3D','3d'],['七乐彩','7lc'],['七星彩','7xc'],['排列三','pl3'],['排列五','pl5']];
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  function parseDraws(text, sp){
+    const byIssue = {};
+    text.split(/\r?\n/).forEach(line => {
+      const t = line.trim().split(/[\s,]+/);
+      if (t.length < 3 || !DATE_RE.test(t[1])) return;
+      const need = sp.n + (sp.sub === 0 ? 0 : (sp.sub === 'array' ? 2 : 1));
+      const nums = [];
+      for (let i = 0; i < need; i++){
+        const n = parseInt(t[2 + i], 10);
+        if (!Number.isInteger(n)) return;
+        nums.push(n);
+      }
+      const main = nums.slice(0, sp.n);
+      if (!sp.ordered) main.sort((a, b) => a - b);
+      if (main.some(n => n < sp.min || n > sp.max)) return;
+      if (sp.unique && new Set(main).size !== main.length) return;
+      const sub = nums.slice(sp.n);
+      if (sp.sub === 0){
+        byIssue[t[0]] = [t[0], t[1], main];
+      } else if (sp.sub === 'scalar'){
+        if (sub[0] < sp.subMin || sub[0] > sp.subMax) return;
+        if (sp.subExcl && main.indexOf(sub[0]) >= 0) return;
+        byIssue[t[0]] = [t[0], t[1], main, sub[0]];
+      } else {
+        const s = sub.slice().sort((a, b) => a - b);
+        if (s.some(n => n < sp.subMin || n > sp.subMax) || new Set(s).size !== s.length) return;
+        byIssue[t[0]] = [t[0], t[1], main, s];
+      }
+    });
+    const rows = Object.keys(byIssue).sort().map(k => byIssue[k]);
+    return rows.slice(-sp.count);
+  }
   function isDraw(d, sp){
     if (!Array.isArray(d) || typeof d[0] !== 'string' || typeof d[1] !== 'string') return false;
     if (!Array.isArray(d[2]) || d[2].length !== sp.n) return false;
@@ -226,17 +270,35 @@ switchTab('ssq');
   function cutoffText(){
     return LABELS.map(l => { const last = DATA[l[1]][DATA[l[1]].length-1]; return l[0] + '截至 ' + last[0] + ' 期（' + last[1] + '）'; }).join(' · ');
   }
-  let ctrl = null;
-  try { ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 15000); } catch(e) {}
-  fetch('/api/draws', ctrl ? {signal: ctrl.signal} : {}).then(r => {
-    if (!r.ok) throw new Error('http ' + r.status);
-    return r.json();
-  }).then(f => {
-    if (!validFresh(f)) return;
+  function applyFresh(f){
+    if (!validFresh(f)) return false;
     Object.keys(SPECS).forEach(k => DATA[k] = f[k]);
     $('cutoff').textContent = cutoffText();
     renderHist(); renderStat();
-  }).catch(() => {});
+    return true;
+  }
+  async function fetchDirect(){
+    const out = {};
+    for (const k of Object.keys(SPECS)){
+      const res = await fetch(URLS[k], {cache: 'no-store'});
+      if (!res.ok) throw new Error(k + ' http ' + res.status);
+      const rows = parseDraws(await res.text(), SPECS[k]);
+      if (rows.length < SPECS[k].count) throw new Error(k + ' only ' + rows.length + ' draws');
+      out[k] = rows;
+    }
+    return out;
+  }
+  let ctrl = null;
+  try { ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 60000); } catch(e) {}
+  const sig = ctrl ? ctrl.signal : undefined;
+  fetchDirect().then(f => {
+    if (!applyFresh(f)) throw new Error('direct data invalid');
+  }).catch(() => {
+    fetch('/api/draws', sig ? {signal: sig} : {}).then(r => {
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    }).then(f => { applyFresh(f); }).catch(() => {});
+  });
 })();
 </script>
 </body>
