@@ -54,15 +54,24 @@ function parseDraws(text, spec) {
 }
 
 async function fetchText(url) {
-  let res = null;
-  try { res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }); } catch (e) { res = null; }
-  if (res && res.ok) return await res.text();
-  const httpsUrl = url.replace('http://', 'https://');
-  if (httpsUrl !== url) {
-    res = await fetch(httpsUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (res.ok) return await res.text();
+  // 429/5xx/网络异常时重试 3 次（2s/5s 短退避）；每次先 http、失败再试 https
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const u of [url, url.replace('http://', 'https://')]) {
+      try {
+        const res = await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (res.ok) return await res.text();
+        lastErr = new Error('HTTP ' + res.status + ': ' + u);
+        if (res.status === 429 || res.status >= 500) break;
+        throw lastErr;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (attempt === 2) break;
+    await new Promise(r => setTimeout(r, attempt === 0 ? 2000 : 5000));
   }
-  throw new Error('fetch failed: ' + url);
+  throw lastErr || new Error('fetch failed: ' + url);
 }
 
 export async function onRequest(context) {
