@@ -40,13 +40,25 @@ h2{font-size:16px;margin-bottom:10px}
 .b.s{width:24px;height:24px;font-size:11px;font-weight:normal}
 .stat{font-size:13px;line-height:2}
 .stat .tag{display:inline-block;min-width:52px;color:#666}
+.ptable{width:100%;border-collapse:collapse;font-size:13px;margin:4px 0}
+.ptable th,.ptable td{border-bottom:1px solid #f0f0f0;padding:7px 4px;text-align:left}
+.ptable th{color:#888;font-weight:normal;font-size:12px}
+.ptable td:last-child,.ptable th:last-child{text-align:right;white-space:nowrap}
+.pnote{font-size:12px;color:#999;line-height:1.7;margin-top:6px}
+.calcInputs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:12px 0 6px}
+.calcInputs input{width:38px;height:38px;text-align:center;font-size:16px;border:1px solid #ddd;border-radius:8px;background:#fff}
+.calcInputs input:focus{outline:none;border-color:#e60012}
+.calcPlus{font-size:16px;color:#999}
+.calcRes{margin-top:12px;font-size:15px;line-height:1.7}
+.prizebtn{border:1px solid #e60012;background:#fff;color:#e60012;border-radius:8px;padding:6px 8px;font-size:12px;cursor:pointer;height:32px;flex:none}
+#prizeCard select{padding:7px 10px;border-radius:8px;border:1px solid #ddd;font-size:14px;background:#fff;max-width:100%}
 .foot{font-size:12px;color:#999;text-align:center;line-height:1.8;margin-top:6px}
 .toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:9px 18px;border-radius:20px;font-size:14px;display:none;z-index:99}
 </style>
 </head>
 <body>
 <h1>彩票选号</h1>
-<p class="sub">随机选号 · 历史数据 · 冷热统计</p>
+<p class="sub">随机选号 · 历史数据 · 冷热统计 · 奖金</p>
 <div class="tabs">
 <button class="tab on" data-t="ssq">双色球</button>
 <button class="tab" data-t="dlt">大乐透</button>
@@ -67,6 +79,15 @@ h2{font-size:16px;margin-bottom:10px}
 <button class="btn" id="gen">🎲 生成号码</button>
 <div class="pick" id="pick"></div>
 <button class="copyall" id="copyall" style="display:none">复制全部</button>
+</div>
+<div class="card" id="prizeCard">
+<h2>💰 奖金 <span style="font-weight:normal;font-size:12px;color:#999" id="pzDrawLabel"></span></h2>
+<div style="margin-bottom:8px;font-size:13px;color:#666">对照期号 <select id="pzSel"></select></div>
+<div id="pzDrawNums" style="margin-bottom:4px"></div>
+<div id="pzTable"></div>
+<div id="pzNotes" class="pnote"></div>
+<div id="pzCalc"></div>
+<div id="pzResult" class="calcRes"></div>
 </div>
 <div class="card">
 <h2>📊 冷热统计 <span style="font-weight:normal;font-size:12px;color:#999" id="statRange"></span></h2>
@@ -102,7 +123,7 @@ const META = {
   pl3: {digit: true, rule: '百、十、个位各 1 个数字（0–9，可重复），每天开奖', pools: [[0,9,3,'green',1]], statPools: [[0,9,'数字',3,'main']]},
   pl5: {digit: true, rule: '万、千、百、十、个位各 1 个数字（0–9，可重复），每天开奖', pools: [[0,9,5,'green',1]], statPools: [[0,9,'数字',3,'main']]}
 };
-let cur = 'ssq', nSets = 5;
+let cur = 'ssq', nSets = 5, lastSets = [];
 const $ = id => document.getElementById(id);
 const pad = n => (n < 10 ? '0' + n : '' + n);
 function rnd(n){ const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }
@@ -123,6 +144,7 @@ function gen(){
   const pools = m.pools.map(p => p.slice());
   if (cur === 'kl8') pools[0][2] = parseInt($('kl8count').value, 10);
   const pickEl = $('pick'); let html = ''; const texts = [];
+  lastSets = [];
   for (let i = 0; i < nSets; i++){
     const set = [];
     pools.forEach((p, pi) => {
@@ -130,13 +152,19 @@ function gen(){
       else if (p[4]) set.push(drawOrdered(p[0], p[1], p[2]));
       else set.push(sample(p[0], p[1], p[2]));
     });
-    const txt = setText(set); texts.push(txt);
+    const txt = setText(set); texts.push(txt); lastSets.push(set);
     let balls = '';
     set.forEach((nums, pi) => nums.forEach(n => balls += ball(n, pools[pi][3], false, pi === 0 && !!m.digit)));
-    html += '<div class="row"><span class="idx">' + (i+1) + '</span><div class="balls">' + balls + '</div><button class="copy" data-t="' + txt.replace(/"/g,'') + '">复制</button></div>';
+    html += '<div class="row"><span class="idx">' + (i+1) + '</span><div class="balls">' + balls + '</div><button class="copy" data-t="' + txt.replace(/"/g,'') + '">复制</button>' + (PRIZE_TIERS[cur] ? '<button class="prizebtn" data-i="' + i + '">算奖金</button>' : '') + '</div>';
   }
   pickEl.innerHTML = html;
   pickEl.querySelectorAll('.copy').forEach(b => b.onclick = () => copyText(b.dataset.t));
+  pickEl.querySelectorAll('.prizebtn').forEach(b => b.onclick = () => {
+    const set = lastSets[parseInt(b.dataset.i, 10)];
+    if (!set) return;
+    fillCalc(set); runCalc();
+    $('prizeCard').scrollIntoView({behavior:'smooth', block:'start'});
+  });
   $('copyall').style.display = 'block';
   $('copyall').onclick = () => copyText(texts.join('\n'));
 }
@@ -178,12 +206,286 @@ function renderStat(){
   });
   $('stat').innerHTML = html;
 }
+// ---------- 奖金 ----------
+// 奖级表：tiers 按 txt 奖金对子顺序排列。fixed 为固定奖、文件金额为 0 时的回落值（null = 浮动奖，无数据时显示“浮动”；
+// 大乐透三～七等固定奖档位会变（vary），不写死，无数据时显示“—”）。
+const PRIZE_TIERS = {
+  ssq: {tiers:[
+    {name:'一等奖', cond:'6红+1蓝', fixed:null},
+    {name:'二等奖', cond:'6红', fixed:null},
+    {name:'三等奖', cond:'5红+1蓝', fixed:3000},
+    {name:'四等奖', cond:'5红 / 4红+1蓝', fixed:200},
+    {name:'五等奖', cond:'4红 / 3红+1蓝', fixed:10},
+    {name:'六等奖', cond:'2红+1蓝 / 1红+1蓝 / 0红+1蓝', fixed:5}],
+    promo:6, promoName:'六等奖（派奖翻番）', promoNote:'单票满 20 元参与'},
+  dlt: {tiers:[
+    {name:'一等奖', cond:'5+2', fixed:null},
+    {name:'二等奖', cond:'5+1', fixed:null},
+    {name:'三等奖', cond:'5+0 / 4+2', fixed:null, vary:true},
+    {name:'四等奖', cond:'4+1', fixed:null, vary:true},
+    {name:'五等奖', cond:'4+0 / 3+2', fixed:null, vary:true},
+    {name:'六等奖', cond:'3+1 / 2+2', fixed:null, vary:true},
+    {name:'七等奖', cond:'3+0 / 2+1 / 1+2 / 0+2', fixed:null, vary:true}],
+    addOnBase:9, addOn:[
+    {name:'追加一等奖', cond:'5+2'},
+    {name:'追加二等奖', cond:'5+1'},
+    {name:'追加三等奖', cond:'5+0 / 4+2'}]},
+  '7lc': {tiers:[
+    {name:'一等奖', cond:'7个基本号', fixed:null},
+    {name:'二等奖', cond:'6个基本号+特别号', fixed:null},
+    {name:'三等奖', cond:'6个基本号', fixed:null},
+    {name:'四等奖', cond:'5个基本号', fixed:200},
+    {name:'五等奖', cond:'4个基本号', fixed:50},
+    {name:'六等奖', cond:'3个基本号', fixed:10},
+    {name:'七等奖', cond:'2个基本号+特别号', fixed:5}]},
+  '7xc': {tiers:[
+    {name:'一等奖', cond:'7位全中', fixed:null},
+    {name:'二等奖', cond:'连续6位', fixed:null},
+    {name:'三等奖', cond:'连续5位', fixed:3000},
+    {name:'四等奖', cond:'连续4位', fixed:500},
+    {name:'五等奖', cond:'连续3位', fixed:30},
+    {name:'六等奖', cond:'连续2位', fixed:5}]},
+  pl3: {tiers:[
+    {name:'直选', cond:'按位全中', fixed:1040},
+    {name:'组三', cond:'两同号', fixed:346},
+    {name:'组六', cond:'三不同', fixed:173}], noCounts:true},
+  pl5: {tiers:[{name:'一等奖', cond:'5位全中', fixed:100000}]},
+  '3d': {tiers:[
+    {name:'直选', cond:'按位全中', fixed:1040},
+    {name:'组三', cond:'两同号', fixed:346},
+    {name:'组六', cond:'三不同', fixed:173}], noCounts:true}
+};
+const fmtMoney = n => Number(n).toLocaleString('en-US') + '元';
+function rowPrizes(d){
+  if (!Array.isArray(d) || !d.length) return null;
+  const last = d[d.length - 1];
+  if (!Array.isArray(last) || !last.length || !Array.isArray(last[0])) return null;
+  return last;
+}
+function hasPrizeData(pz, key){
+  if (!pz) return false;
+  if (key === 'pl5' || key === '3d') return true; // 固定奖已知，文件金额为 0 时用固定值回落
+  return pz.some(p => p[0] > 0 || p[1] > 0);
+}
+function prizeAmount(key, tierIdx, pair){
+  if (pair && pair[1] > 0) return pair[1];
+  const t = PRIZE_TIERS[key].tiers[tierIdx];
+  if (t && t.fixed != null) return t.fixed;
+  return null;
+}
+function amountText(key, tierIdx, pair){
+  if (pair && pair[1] > 0) return fmtMoney(pair[1]);
+  const t = PRIZE_TIERS[key].tiers[tierIdx];
+  if (t && t.fixed != null) return fmtMoney(t.fixed);
+  if (t && t.vary) return '—';
+  return '浮动';
+}
+let pzDrawIdx = -1; // 对照期号在 DATA[cur] 里的下标，-1 = 最新一期
+function prizeDraw(){
+  const d = DATA[cur];
+  if (!d || !d.length) return null;
+  if (pzDrawIdx < 0 || pzDrawIdx >= d.length) pzDrawIdx = d.length - 1;
+  return d[pzDrawIdx];
+}
+function drawBallsHtml(key, d){
+  let balls = '';
+  if (key === 'ssq'){ d[2].forEach(n => balls += ball(n, 'red', true)); balls += ball(d[3], 'blue', true); }
+  else if (key === 'dlt'){ d[2].forEach(n => balls += ball(n, 'red', true)); d[3].forEach(n => balls += ball(n, 'blue', true)); }
+  else if (key === '7lc'){ d[2].forEach(n => balls += ball(n, 'red', true)); balls += ball(d[3], 'blue', true); }
+  else if (key === '7xc'){ d[2].forEach(n => balls += ball(n, 'red', true, true)); balls += ball(d[3], 'blue', true); }
+  else if (META[key].digit){ d[2].forEach(n => balls += ball(n, 'green', true, true)); }
+  else d[2].forEach(n => balls += ball(n, 'green', true));
+  return '<div class="hballs">' + balls + '</div>';
+}
+function prizeTableHtml(draw){
+  const pz = rowPrizes(draw);
+  const cfg = PRIZE_TIERS[cur];
+  if (!hasPrizeData(pz, cur)) return '<p class="pnote">该期暂无奖金数据（更早的期只有号码，没有奖金记录）。</p>';
+  let h = '<table class="ptable"><tr><th>奖级</th><th>中奖条件</th><th>中奖注数</th><th>单注奖金</th></tr>';
+  cfg.tiers.forEach((t, i) => {
+    const pair = pz[i];
+    const cnt = cfg.noCounts ? '—' : (pair ? pair[0].toLocaleString('en-US') : '—');
+    h += '<tr><td>' + t.name + '</td><td>' + t.cond + '</td><td>' + cnt + '</td><td>' + amountText(cur, i, pair) + '</td></tr>';
+  });
+  if (cfg.promo != null && pz[cfg.promo] && pz[cfg.promo][0] > 0){
+    h += '<tr><td>' + cfg.promoName + '</td><td>' + cfg.promoNote + '</td><td>' + pz[cfg.promo][0].toLocaleString('en-US') + '</td><td>' + fmtMoney(pz[cfg.promo][1]) + '</td></tr>';
+  }
+  if (cfg.addOn){
+    cfg.addOn.forEach((t, j) => {
+      const pair = pz[cfg.addOnBase + j];
+      const basic = prizeAmount(cur, j, pz[j]);
+      const amt = (pair && pair[1] > 0) ? pair[1] : (basic != null ? Math.floor(basic * 0.8) : null);
+      const cnt = pair ? pair[0].toLocaleString('en-US') : '—';
+      h += '<tr><td>' + t.name + '</td><td>' + t.cond + '</td><td>' + cnt + '</td><td>' + (amt != null ? fmtMoney(amt) : (basic == null ? '浮动' : '—')) + '</td></tr>';
+    });
+  }
+  h += '</table>';
+  return h;
+}
+function prizeNotesHtml(draw){
+  const pz = rowPrizes(draw);
+  const cfg = PRIZE_TIERS[cur];
+  const notes = [];
+  if (cfg.promo != null && pz && pz[cfg.promo] && pz[cfg.promo][0] > 0){
+    notes.push('双色球派奖期：六等奖翻番每注 +5 元（单票满 20 元参与）；二等奖另有特别奖，金额未在数据源中，另行处理。');
+  }
+  if (cfg.addOn) notes.push('追加奖金为基本奖金的 80%。');
+  if (cfg.noCounts) notes.push('注数未在数据源中提供，只显示单注奖金。');
+  return notes.join('<br>');
+}
+function calcPrize(key, set, draw, addon){
+  const pz = rowPrizes(draw);
+  if (!hasPrizeData(pz, key)) return {none:true};
+  const cfg = PRIZE_TIERS[key];
+  let tier = -1;
+  if (key === 'ssq'){
+    const redHit = set[0].filter(n => draw[2].indexOf(n) >= 0).length;
+    const blueHit = set[1][0] === draw[3];
+    if (redHit === 6 && blueHit) tier = 0;
+    else if (redHit === 6) tier = 1;
+    else if (redHit === 5 && blueHit) tier = 2;
+    else if (redHit === 5 || (redHit === 4 && blueHit)) tier = 3;
+    else if (redHit === 4 || (redHit === 3 && blueHit)) tier = 4;
+    else if (blueHit) tier = 5;
+  } else if (key === 'dlt'){
+    const fHit = set[0].filter(n => draw[2].indexOf(n) >= 0).length;
+    const bHit = set[1].filter(n => draw[3].indexOf(n) >= 0).length;
+    if (fHit === 5 && bHit === 2) tier = 0;
+    else if (fHit === 5 && bHit === 1) tier = 1;
+    else if ((fHit === 5 && bHit === 0) || (fHit === 4 && bHit === 2)) tier = 2;
+    else if (fHit === 4 && bHit === 1) tier = 3;
+    else if ((fHit === 4 && bHit === 0) || (fHit === 3 && bHit === 2)) tier = 4;
+    else if ((fHit === 3 && bHit === 1) || (fHit === 2 && bHit === 2)) tier = 5;
+    else if ((fHit === 3 && bHit === 0) || (fHit === 2 && bHit === 1) || (fHit === 1 && bHit === 2) || (fHit === 0 && bHit === 2)) tier = 6;
+  } else if (key === '7lc'){
+    const hit = set[0].filter(n => draw[2].indexOf(n) >= 0).length;
+    const spHit = set[1][0] === draw[3];
+    if (hit === 7) tier = 0;
+    else if (hit === 6 && spHit) tier = 1;
+    else if (hit === 6) tier = 2;
+    else if (hit === 5) tier = 3;
+    else if (hit === 4) tier = 4;
+    else if (hit === 3) tier = 5;
+    else if (hit === 2 && spHit) tier = 6;
+  } else if (key === '7xc'){
+    const u = set[0].concat(set[1]);
+    const w = draw[2].concat([draw[3]]);
+    let best = 0, run = 0;
+    for (let i = 0; i < 7; i++){
+      if (u[i] === w[i]){ run++; if (run > best) best = run; }
+      else run = 0;
+    }
+    if (best >= 2) tier = 7 - best;
+  } else if (key === 'pl3' || key === '3d'){
+    const u = set[0], w = draw[2];
+    if (u.every((n, i) => n === w[i])) tier = 0;
+    else if (u.slice().sort().join('') === w.slice().sort().join('')) tier = (new Set(w).size === 2) ? 1 : 2;
+  } else if (key === 'pl5'){
+    if (set[0].every((n, i) => n === draw[2][i])) tier = 0;
+  }
+  if (tier < 0) return {tier:-1};
+  const amount = prizeAmount(key, tier, pz[tier]);
+  let addonAmt = 0, note = '';
+  if (key === 'dlt' && addon && tier <= 2){
+    const ap = pz[cfg.addOnBase + tier];
+    addonAmt = (ap && ap[1] > 0) ? ap[1] : (amount != null ? Math.floor(amount * 0.8) : 0);
+  }
+  if (key === 'ssq' && cfg.promo != null && pz[cfg.promo] && pz[cfg.promo][0] > 0){
+    if (tier === 5) note = '派奖期：单票满 20 元，六等奖翻番再得 5 元，共 10 元。';
+    if (tier === 1) note = '派奖期：二等奖另有特别奖，金额未在数据源中，另行处理。';
+  }
+  return {tier: tier, name: cfg.tiers[tier].name, amount: amount, addon: addonAmt, total: (amount != null ? amount + addonAmt : null), note: note};
+}
+function calcResultHtml(res, draw){
+  if (res.none) return '<span style="color:#999">该期暂无奖金数据，无法计算。</span>';
+  if (res.tier < 0) return '未中奖（对照 ' + draw[0] + ' 期）。';
+  let h = '<b>' + res.name + '</b>：' + (res.amount != null ? fmtMoney(res.amount) : '浮动奖（金额见上表）');
+  if (res.addon) h += ' + 追加 ' + fmtMoney(res.addon);
+  if (res.total != null) h += '，共 <b>' + fmtMoney(res.total) + '</b>';
+  if (res.note) h += '<br><span style="font-weight:normal;font-size:12px;color:#666">' + res.note + '</span>';
+  return h;
+}
+function fillCalc(set){
+  const inputs = document.querySelectorAll('#pzCalc input[type="text"]');
+  let k = 0;
+  set.forEach(nums => nums.forEach(n => {
+    if (inputs[k]) inputs[k].value = (META[cur].digit ? n : pad(n));
+    k++;
+  }));
+}
+function readCalc(){
+  const inputs = document.querySelectorAll('#pzCalc input[type="text"]');
+  const m = META[cur];
+  const set = [];
+  let k = 0;
+  for (let pi = 0; pi < m.pools.length; pi++){
+    const p = m.pools[pi];
+    const arr = [];
+    for (let i = 0; i < p[2]; i++){
+      const el = inputs[k++];
+      if (!el) return null;
+      const v = el.value.trim();
+      if (v === '') return null;
+      const n = parseInt(v, 10);
+      if (!Number.isInteger(n) || n < p[0] || n > p[1]) return null;
+      arr.push(n);
+    }
+    if ((cur === 'ssq' || cur === 'dlt' || cur === '7lc') && new Set(arr).size !== arr.length) return null;
+    set.push(arr);
+  }
+  return set;
+}
+function runCalc(){
+  const draw = prizeDraw();
+  const resEl = $('pzResult');
+  if (!draw){ resEl.innerHTML = ''; return; }
+  const set = readCalc();
+  if (!set){ resEl.innerHTML = '<span style="color:#e60012">号码不完整、超出范围或有重复，请按格式输入。</span>'; return; }
+  const addon = cur === 'dlt' && $('pzAddon') && $('pzAddon').checked;
+  resEl.innerHTML = calcResultHtml(calcPrize(cur, set, draw, addon), draw);
+}
+function renderPrizeTable(){
+  const draw = prizeDraw();
+  if (!draw) return;
+  $('pzDrawLabel').textContent = '第 ' + draw[0] + ' 期（' + draw[1] + '）';
+  $('pzDrawNums').innerHTML = drawBallsHtml(cur, draw);
+  $('pzTable').innerHTML = prizeTableHtml(draw);
+  $('pzNotes').innerHTML = prizeNotesHtml(draw);
+  $('pzResult').innerHTML = '';
+}
+function renderPrize(){
+  const card = $('prizeCard');
+  if (!PRIZE_TIERS[cur]){ card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const d = DATA[cur];
+  const sel = $('pzSel');
+  sel.innerHTML = d.slice().reverse().map((r, i) => {
+    const idx = d.length - 1 - i;
+    return '<option value="' + idx + '"' + (idx === pzDrawIdx || (pzDrawIdx < 0 && i === 0) ? ' selected' : '') + '>' + r[0] + ' 期（' + r[1] + '）</option>';
+  }).join('');
+  sel.onchange = () => { pzDrawIdx = parseInt(sel.value, 10); renderPrizeTable(); };
+  renderPrizeTable();
+  const m = META[cur];
+  let h = '<div class="calcInputs">';
+  m.pools.forEach((p, pi) => {
+    for (let i = 0; i < p[2]; i++){
+      h += '<input type="text" inputmode="numeric" maxlength="' + (p[1] <= 9 ? 1 : 2) + '" placeholder="' + (p[1] <= 9 ? '·' : '··') + '">';
+    }
+    if (pi === 0 && m.pools.length > 1) h += '<span class="calcPlus">+</span>';
+  });
+  h += '</div>';
+  if (cur === 'dlt') h += '<label style="font-size:13px;color:#666"><input type="checkbox" id="pzAddon"> 追加投注（追加奖金为基本奖金的 80%）</label>';
+  h += '<div style="margin-top:10px"><button class="btn" id="pzCalcBtn">算一算中了多少</button></div>';
+  $('pzCalc').innerHTML = h;
+  $('pzCalcBtn').onclick = runCalc;
+}
 function switchTab(t){
   cur = t;
+  pzDrawIdx = -1;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   $('rule').textContent = META[t].rule;
   $('kl8wrap').style.display = t === 'kl8' ? 'inline' : 'none';
-  renderHist(); renderStat(); gen();
+  renderHist(); renderStat(); renderPrize(); gen();
 }
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => switchTab(b.dataset.t));
 document.querySelectorAll('#countSeg button').forEach(b => b.onclick = () => {
@@ -198,14 +500,14 @@ switchTab('ssq');
 // 全部失败时静默用页内数据（每晚定时任务也会刷新页内数据）。
 (function(){
   const SPECS = {
-    ssq: {n:6, min:1, max:33, sub:'scalar', subMin:1, subMax:16, count:100, unique:true},
-    dlt: {n:5, min:1, max:35, sub:'array', subMin:1, subMax:12, count:100, unique:true},
+    ssq: {n:6, min:1, max:33, sub:'scalar', subMin:1, subMax:16, count:100, unique:true, pz:[17,7]},
+    dlt: {n:5, min:1, max:35, sub:'array', subMin:1, subMax:12, count:100, unique:true, pz:[18,12]},
     kl8: {n:20, min:1, max:80, sub:0, count:50, unique:true},
-    '3d': {n:3, min:0, max:9, sub:0, count:50, unique:false, ordered:true},
-    '7lc': {n:7, min:1, max:30, sub:'scalar', subMin:1, subMax:30, count:50, unique:true, subExcl:true},
-    '7xc': {n:6, min:0, max:9, sub:'scalar', subMin:0, subMax:14, count:50, unique:false, ordered:true},
-    pl3: {n:3, min:0, max:9, sub:0, count:50, unique:false, ordered:true},
-    pl5: {n:5, min:0, max:9, sub:0, count:50, unique:false, ordered:true}
+    '3d': {n:3, min:0, max:9, sub:0, count:50, unique:false, ordered:true, pz:[11,3]},
+    '7lc': {n:7, min:1, max:30, sub:'scalar', subMin:1, subMax:30, count:50, unique:true, subExcl:true, pz:[12,7]},
+    '7xc': {n:6, min:0, max:9, sub:'scalar', subMin:0, subMax:14, count:50, unique:false, ordered:true, pz:[11,6]},
+    pl3: {n:3, min:0, max:9, sub:0, count:50, unique:false, ordered:true, pz:[6,3]},
+    pl5: {n:5, min:0, max:9, sub:0, count:50, unique:false, ordered:true, pz:[8,1]}
   };
   const URLS = {
     ssq: 'https://data.17500.cn/ssq_asc.txt',
@@ -219,9 +521,34 @@ switchTab('ssq');
   };
   const LABELS = [['双色球','ssq'],['大乐透','dlt'],['快乐8','kl8'],['福彩3D','3d'],['七乐彩','7lc'],['七星彩','7xc'],['排列三','pl3'],['排列五','pl5']];
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  function splitRecords(text){
+    // 按期号把物理行拼成逻辑行：以“期号 日期”开头的行是新一期，其余非空行是上一期的续行（大乐透单期占两行，快乐8 约四行）。
+    const records = [];
+    text.split(/\r?\n/).forEach(line => {
+      const t = line.trim().split(/[\s,]+/);
+      if (!t[0]) return;
+      if (t.length >= 2 && DATE_RE.test(t[1])) records.push(line.trim());
+      else if (records.length) records[records.length - 1] += ' ' + line.trim();
+    });
+    return records;
+  }
+  function parsePrizes(t, sp){
+    // 从整行 token 取奖金对子 [注数, 单注奖金] × N；token 不足或解析失败返回 null（该期只有号码、无奖金数据）。
+    if (!sp.pz) return null;
+    const start = sp.pz[0], count = sp.pz[1];
+    if (t.length < start + 2 * count) return null;
+    const pairs = [];
+    for (let i = 0; i < count; i++){
+      const c = parseInt(t[start + 2 * i], 10);
+      const a = parseFloat(t[start + 2 * i + 1]);
+      if (!Number.isInteger(c) || c < 0 || !Number.isFinite(a) || a < 0) return null;
+      pairs.push([c, a]);
+    }
+    return pairs;
+  }
   function parseDraws(text, sp){
     const byIssue = {};
-    text.split(/\r?\n/).forEach(line => {
+    splitRecords(text).forEach(line => {
       const t = line.trim().split(/[\s,]+/);
       if (t.length < 3 || !DATE_RE.test(t[1])) return;
       const need = sp.n + (sp.sub === 0 ? 0 : (sp.sub === 'array' ? 2 : 1));
@@ -236,17 +563,21 @@ switchTab('ssq');
       if (main.some(n => n < sp.min || n > sp.max)) return;
       if (sp.unique && new Set(main).size !== main.length) return;
       const sub = nums.slice(sp.n);
+      let row;
       if (sp.sub === 0){
-        byIssue[t[0]] = [t[0], t[1], main];
+        row = [t[0], t[1], main];
       } else if (sp.sub === 'scalar'){
         if (sub[0] < sp.subMin || sub[0] > sp.subMax) return;
         if (sp.subExcl && main.indexOf(sub[0]) >= 0) return;
-        byIssue[t[0]] = [t[0], t[1], main, sub[0]];
+        row = [t[0], t[1], main, sub[0]];
       } else {
         const s = sub.slice().sort((a, b) => a - b);
         if (s.some(n => n < sp.subMin || n > sp.subMax) || new Set(s).size !== s.length) return;
-        byIssue[t[0]] = [t[0], t[1], main, s];
+        row = [t[0], t[1], main, s];
       }
+      const pz = parsePrizes(t, sp);
+      if (pz) row.push(pz);
+      byIssue[t[0]] = row;
     });
     const rows = Object.keys(byIssue).sort().map(k => byIssue[k]);
     return rows.slice(-sp.count);
@@ -274,7 +605,7 @@ switchTab('ssq');
     if (!validFresh(f)) return false;
     Object.keys(SPECS).forEach(k => DATA[k] = f[k]);
     $('cutoff').textContent = cutoffText();
-    renderHist(); renderStat();
+    renderHist(); renderStat(); renderPrize();
     return true;
   }
   async function fetchDirect(){
