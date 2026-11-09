@@ -18,15 +18,19 @@ from pathlib import Path
 KEYS = ('ssq', 'dlt', 'kl8', '3d', '7lc', '7xc', 'pl3', 'pl5')
 LABELS = {'ssq': '双色球', 'dlt': '大乐透', 'kl8': '快乐8', '3d': '福彩3D',
           '7lc': '七乐彩', '7xc': '七星彩', 'pl3': '排列三', 'pl5': '排列五'}
+# 奖金列（2026-11-09 核实）：号码后附带 [注数, 单注奖金] 对子；prize_start 为对子在整行 token（期号0/日期1/号码2…）里的起始下标。
+# ssq 17 起 7 对（一～六等 + 派奖六等奖翻番）；dlt 18 起 12 对（九个基本奖级 + 三个追加），单期占两行须先拼行；
+# 7lc 12 起 7 对；7xc 11 起 6 对；pl3 6 起 3 对（直选/组三/组六）；pl5 8 起 1 对；3d 11 起 3 对（直选/组三/组六，注数恒为 0 只取金额）。
+# kl8 二期（单期跨多行、金额带小数，暂不解析）。
 SPECS = {
-    'ssq': {'url': 'http://data.17500.cn/ssq_asc.txt', 'count': 100, 'main': 6, 'main_max': 33, 'sub': 1, 'sub_max': 16},
-    'dlt': {'url': 'http://data.17500.cn/dlt_asc.txt', 'count': 100, 'main': 5, 'main_max': 35, 'sub': 2, 'sub_max': 12},
-    'kl8': {'url': 'http://data.17500.cn/kl8_asc.txt', 'count': 50, 'main': 20, 'main_max': 80, 'sub': 0, 'sub_max': 0},
-    '3d': {'url': 'http://data.17500.cn/3d_asc.txt', 'count': 50, 'main': 3, 'main_min': 0, 'main_max': 9, 'sub': 0, 'sub_max': 0, 'ordered': True, 'unique': False},
-    '7lc': {'url': 'http://data.17500.cn/7lc_asc.txt', 'count': 50, 'main': 7, 'main_max': 30, 'sub': 1, 'sub_max': 30, 'sub_excl': True},
-    '7xc': {'url': 'http://data.17500.cn/7xc_asc.txt', 'count': 50, 'main': 6, 'main_min': 0, 'main_max': 9, 'sub': 1, 'sub_min': 0, 'sub_max': 14, 'ordered': True, 'unique': False},
-    'pl3': {'url': 'http://data.17500.cn/pl3_asc.txt', 'count': 50, 'main': 3, 'main_min': 0, 'main_max': 9, 'sub': 0, 'sub_max': 0, 'ordered': True, 'unique': False},
-    'pl5': {'url': 'http://data.17500.cn/pl5_asc.txt', 'count': 50, 'main': 5, 'main_min': 0, 'main_max': 9, 'sub': 0, 'sub_max': 0, 'ordered': True, 'unique': False},
+    'ssq': {'url': 'http://data.17500.cn/ssq_asc.txt', 'count': 100, 'main': 6, 'main_max': 33, 'sub': 1, 'sub_max': 16, 'prize_start': 17, 'prize_count': 7},
+    'dlt': {'url': 'http://data.17500.cn/dlt_asc.txt', 'count': 100, 'main': 5, 'main_max': 35, 'sub': 2, 'sub_max': 12, 'prize_start': 18, 'prize_count': 12},
+    'kl8': {'url': 'http://data.17500.cn/kl8_asc.txt', 'count': 50, 'main': 20, 'main_max': 80, 'sub': 0, 'sub_max': 0, 'prize_start': None, 'prize_count': 0},
+    '3d': {'url': 'http://data.17500.cn/3d_asc.txt', 'count': 50, 'main': 3, 'main_min': 0, 'main_max': 9, 'sub': 0, 'sub_max': 0, 'ordered': True, 'unique': False, 'prize_start': 11, 'prize_count': 3},
+    '7lc': {'url': 'http://data.17500.cn/7lc_asc.txt', 'count': 50, 'main': 7, 'main_max': 30, 'sub': 1, 'sub_max': 30, 'sub_excl': True, 'prize_start': 12, 'prize_count': 7},
+    '7xc': {'url': 'http://data.17500.cn/7xc_asc.txt', 'count': 50, 'main': 6, 'main_min': 0, 'main_max': 9, 'sub': 1, 'sub_min': 0, 'sub_max': 14, 'ordered': True, 'unique': False, 'prize_start': 11, 'prize_count': 6},
+    'pl3': {'url': 'http://data.17500.cn/pl3_asc.txt', 'count': 50, 'main': 3, 'main_min': 0, 'main_max': 9, 'sub': 0, 'sub_max': 0, 'ordered': True, 'unique': False, 'prize_start': 6, 'prize_count': 3},
+    'pl5': {'url': 'http://data.17500.cn/pl5_asc.txt', 'count': 50, 'main': 5, 'main_min': 0, 'main_max': 9, 'sub': 0, 'sub_max': 0, 'ordered': True, 'unique': False, 'prize_start': 8, 'prize_count': 1},
 }
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
@@ -63,12 +67,48 @@ def fetch_text(url):
     raise last_exc or RuntimeError('fetch failed: ' + url)
 
 
+def split_records(text):
+    """把 txt 按期号切成逻辑行：以“期号 日期”开头的行是新一期，其余非空行是上一期的续行
+    （大乐透单期占两行，快乐8 占约四行；续行直接拼到上一期后面再解析）。"""
+    records = []
+    for raw in text.splitlines():
+        t = re.split(r'[\s,]+', raw.strip())
+        if not t or not t[0]:
+            continue
+        if len(t) >= 2 and DATE_RE.match(t[1]):
+            records.append(raw.strip())
+        elif records:
+            records[-1] = records[-1] + ' ' + raw.strip()
+    return records
+
+
+def parse_prizes(t, spec):
+    """从整行 token 取奖金对子 [注数, 单注奖金] × N；token 不足或解析失败返回 None（该期只有号码、无奖金数据）。"""
+    start = spec.get('prize_start')
+    count = spec.get('prize_count') or 0
+    if not start or not count:
+        return None
+    if len(t) < start + 2 * count:
+        return None
+    pairs = []
+    for i in range(count):
+        try:
+            c = int(t[start + 2 * i])
+            a = float(t[start + 2 * i + 1])
+        except (ValueError, IndexError):
+            return None
+        if c < 0 or a < 0:
+            return None
+        pairs.append([c, int(a) if a == int(a) else a])
+    return pairs
+
+
 def parse_draws(text, spec):
-    """txt 行格式：期号 日期 号码…（其余字段忽略）；只取每行首段的期号/日期/号码。"""
+    """txt 行格式：期号 日期 号码… 奖金对子…；先按期号拼行（大乐透两行），再取号码，行尾追加奖金对子。"""
     main_min = spec.get('main_min', 1)
     sub_min = spec.get('sub_min', 1)
     by_issue = {}
-    for line in text.splitlines():
+    for line in split_records(text):
         t = re.split(r'[\s,]+', line.strip())
         if len(t) < 3 or not DATE_RE.match(t[1]):
             continue
@@ -96,14 +136,18 @@ def parse_draws(text, spec):
                 continue
             if spec.get('sub_excl') and sub[0] in main:
                 continue
-            by_issue[t[0]] = [t[0], t[1], main, sub[0]]
+            row = [t[0], t[1], main, sub[0]]
         elif spec['sub'] == 2:
             s = sorted(sub)
             if any(n < sub_min or n > spec['sub_max'] for n in s) or len(set(s)) != len(s):
                 continue
-            by_issue[t[0]] = [t[0], t[1], main, s]
+            row = [t[0], t[1], main, s]
         else:
-            by_issue[t[0]] = [t[0], t[1], main]
+            row = [t[0], t[1], main]
+        prizes = parse_prizes(t, spec)
+        if prizes is not None:
+            row.append(prizes)
+        by_issue[t[0]] = row
     rows = [by_issue[k] for k in sorted(by_issue)]
     return rows[-spec['count']:]
 
@@ -130,6 +174,16 @@ def validate_rows(rows, spec, key):
                 assert r[3] not in main, f'{key}: 特别号与主号重复 {r}'
         elif spec['sub'] == 2:
             assert len(r[3]) == 2 and r[3] == sorted(r[3]) and all(sub_min <= n <= spec['sub_max'] for n in r[3]), f'{key}: 后区错 {r}'
+        # 奖金（若有）：行尾一串 [注数, 单注奖金] 对子，对数与彩种一致；缺失不报错（该期只算无奖金数据）
+        if spec.get('prize_count'):
+            pz_idx = 4 if spec['sub'] else 3
+            if len(r) > pz_idx:
+                pz = r[pz_idx]
+                assert isinstance(pz, list) and len(pz) == spec['prize_count'], f'{key}: 奖金对数错 {r}'
+                for pair in pz:
+                    assert isinstance(pair, list) and len(pair) == 2, f'{key}: 奖金对错 {r}'
+                    c, a = pair
+                    assert isinstance(c, int) and c >= 0 and isinstance(a, (int, float)) and a >= 0, f'{key}: 奖金对错 {r}'
 
 
 def render_data_block(rows_by_key):
